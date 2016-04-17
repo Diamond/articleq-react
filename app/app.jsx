@@ -4,15 +4,17 @@ import { Provider, connect } from "react-redux";
 import { bindActionCreators, createStore, combineReducers, applyMiddleware } from "redux";
 import ReduxPromise from "redux-promise";
 import axios from "axios";
+import { Router, Route, browserHistory } from "react-router";
+import { syncHistoryWithStore, routerReducer, routerMiddleware, push } from "react-router-redux";
 
 // BASE AXIOS CONFIGURATION
 
 const axiosConfig = (token) => {
-  const base = { "headers": { "Accept": "application/json", "Content-Type": "application/json"} };
+  const headers = { "Accept": "application/json", "Content-Type": "application/json"}
   if (token) {
-    return Object.assign({}, base, { "Authorization": token });
+    return { "headers": Object.assign({}, headers, { "Authorization": token })};
   } else {
-    return base;
+    return { "headers": headers };
   }
 };
 
@@ -36,43 +38,67 @@ const logInReducer = (state=null, action) => {
   switch (action.type) {
     case APP_START:
       const jwt = localStorage.getItem('jwt');
-      console.log("Received App Start:", jwt);
       return jwt;
     case FETCH_TOKEN:
       const token = action.payload.data.token;
-      console.log("Received log in:", token);
       localStorage.setItem('jwt', token);
       return token;
     case LOG_OUT:
-      console.log("Received log out");
       localStorage.removeItem('jwt');
       return null;
   }
   return state;
 };
 
-const usersReducer = (state=["Brandon"], action) => {
+const usersReducer = (state=[], action) => {
   switch (action.type) {
     case FETCH_USERS:
-      console.log("Fetch users received");
-      return state;
+      const users = action.payload.data.data.map((user) => {
+        return {
+          id: user.id,
+          email: user.attributes.email,
+          username: user.attributes.username
+        };
+      });
+      return users;
   }
   return state;
 };
 
-const createMiddlewareStore = applyMiddleware(ReduxPromise)(createStore);
-const store = createMiddlewareStore(combineReducers({token: logInReducer, users: usersReducer}));
+let createMiddlewareStore = applyMiddleware(ReduxPromise)(createStore);
+const newRouterMiddleware = routerMiddleware(browserHistory);
+const store = createMiddlewareStore(
+  combineReducers({
+    token: logInReducer,
+    users: usersReducer,
+    routing: routerReducer
+  }),
+  applyMiddleware(newRouterMiddleware)
+);
+
+
+const history = syncHistoryWithStore(browserHistory, store);
 
 // ACTION CREATORS
 const tryLogin = (identifier, password) => {
-  const request = axios.post("http://localhost:4000/api/login", { username: identifier, password }, axiosConfig());
+  const request = axios
+    .post("http://localhost:4000/api/login", { username: identifier, password }, axiosConfig());
   return { type: FETCH_TOKEN, payload: request };
 };
 
 const logOut = () => {
-  console.log("Dispatch log out");
   return { type: LOG_OUT };
 };
+
+const fetchUsers = (token) => {
+  const request = axios
+    .get("http://localhost:4000/api/users", axiosConfig(token));
+  return { type: FETCH_USERS, payload: request };
+};
+
+const redirectToRoot = () => {
+  return push("/");
+}
 
 // COMPONENTS
 
@@ -82,24 +108,40 @@ class App extends Component {
       <div>
         <h1>Welcome to React!</h1>
         <div>
-          <a href="#">Login</a>
+          <LoginLinkContainer />
+          &nbsp;
+          <a href="/users">Users</a>
         </div>
-        <LoginFormContainer />
-        <UserListContainer />
+        {this.props.children}
       </div>
     );
   }
 };
 
-class Login extends Component {
+class LoginLink extends Component {
+  constructor(props) {
+    super(props);
+  }
+  loginLink() {
+    if (!this.props.token) {
+      return <a href="/login">Login</a>;
+    } else {
+      return <a href="#" onClick={(event) => { event.preventDefault(); this.props.logOut(); }}>Logout</a>;
+    }
+  }
   render() {
-    return (
-      <div>
-        <a href="#">Login</a>
-      </div>
-    )
+    return this.loginLink();
   }
 };
+const mapLoginStateToProps = (state) => {
+  return {
+    token: state.token
+  };
+};
+const mapLoginDispatchToProps = (dispatch) => {
+  return bindActionCreators({ logOut }, dispatch);
+}
+const LoginLinkContainer = connect(mapLoginStateToProps, mapLoginDispatchToProps)(LoginLink);
 
 class LoginForm extends Component {
   constructor(props) {
@@ -120,7 +162,7 @@ class LoginForm extends Component {
           <br/>
           <input type="text" ref="identifier" placeholder="Username"/>
           <input type="password" ref="password" placeholder="Password"/>
-        <button onClick={() => this.props.tryLogin(this.refs.identifier.value, this.refs.password.value)}>Login</button>
+          <button onClick={() => this.props.tryLogin(this.refs.identifier.value, this.refs.password.value)}>Login</button>
         </div>
       );
     }
@@ -147,11 +189,18 @@ class UserList extends Component {
   constructor(props) {
     super(props);
   }
+  componentWillMount() {
+    if (this.props.token) {
+      this.props.fetchUsers(this.props.token);
+    } else {
+      this.props.redirectToRoot();
+    }
+  }
   userList(users) {
     if (users.length === 0) {
       return <li>No users yet!</li>;
     } else {
-      return users.map((user) => <li key={user}>{user}</li>);
+      return users.map((user) => <li key={user.username}>{user.username} ({user.email})</li>);
     }
   }
   render() {
@@ -167,10 +216,14 @@ class UserList extends Component {
 };
 const mapUserStateToProps = (state) => {
   return {
+    token: state.token,
     users: state.users
   };
 };
-const UserListContainer = connect(mapUserStateToProps)(UserList);
+const mapUserDispatchToProps = (dispatch) => {
+  return bindActionCreators({ fetchUsers, redirectToRoot }, dispatch);
+}
+const UserListContainer = connect(mapUserStateToProps, mapUserDispatchToProps)(UserList);
 
 // INITIAL STATE
 
@@ -180,7 +233,12 @@ store.dispatch({ type: APP_START });
 
 ReactDOM.render(
   <Provider store={store}>
-    <App />
+    <Router history={history}>
+      <Route path="/" component={App}>
+        <Route path="login" component={LoginFormContainer} />
+        <Route path="users" component={UserListContainer} />
+      </Route>
+    </Router>
   </Provider>,
   document.getElementById("app")
 );
