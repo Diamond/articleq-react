@@ -1,5 +1,6 @@
 import React, { Component } from "react";
 import LoginLinkContainer from "./loginLinkContainer";
+import { Link } from "react-router";
 
 export default class App extends Component {
   render() {
@@ -9,7 +10,7 @@ export default class App extends Component {
         <div>
           <LoginLinkContainer />
           &nbsp;
-          <a href="/users">Users</a>
+          <Link to="/users" activeClassName="active">Users</Link>
         </div>
         {this.props.children}
       </div>
